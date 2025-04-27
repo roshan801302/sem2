@@ -1,0 +1,180 @@
+Implement a simple slab allocator in a kernel module using C++. The allocator manages a fixed-size memory pool and provides allocate and deallocate methods, mimicking malloc and free.
+Linked list for blocks
+
+C++ class design for SlabAllocator
+
+Kernel memory functions like kmalloc and kfree
+
+Logging results with printk
+
+Here’s a clean version of the code you can directly build from:
+cpp
+Copy
+Edit
+// slab_allocator.cpp
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/init.h>
+#include <linux/slab.h>   // for kmalloc and kfree
+#include <linux/vmalloc.h> // for vmalloc and vfree
+#include <linux/types.h>
+
+#define POOL_SIZE 4096  // 4KB pool
+#define BLOCK_SIZE 64   // 64 bytes per block
+
+// Define MemoryBlock structure
+struct MemoryBlock {
+    bool is_free;
+    MemoryBlock* next;
+    void* data;  // Pointer to actual data block
+};
+
+// Define SlabAllocator class
+class SlabAllocator {
+private:
+    void* memory_pool;
+    MemoryBlock* block_list_head;
+
+public:
+    SlabAllocator() {
+        memory_pool = kmalloc(POOL_SIZE, GFP_KERNEL);
+        if (!memory_pool) {
+            printk(KERN_ALERT "SlabAllocator: Memory allocation failed!\n");
+            block_list_head = nullptr;
+            return;
+        }
+
+        // Initialize linked list of memory blocks
+        int total_blocks = POOL_SIZE / BLOCK_SIZE;
+        block_list_head = (MemoryBlock*)kmalloc(sizeof(MemoryBlock), GFP_KERNEL);
+
+        MemoryBlock* current = block_list_head;
+        for (int i = 0; i < total_blocks; ++i) {
+            current->is_free = true;
+            current->data = (void*)((char*)memory_pool + i * BLOCK_SIZE);
+
+            if (i != total_blocks - 1) {
+                current->next = (MemoryBlock*)kmalloc(sizeof(MemoryBlock), GFP_KERNEL);
+                current = current->next;
+            } else {
+                current->next = nullptr;
+            }
+        }
+
+        printk(KERN_INFO "SlabAllocator: Initialized with %d blocks\n", total_blocks);
+    }
+
+    ~SlabAllocator() {
+        MemoryBlock* current = block_list_head;
+        while (current) {
+            MemoryBlock* next = current->next;
+            kfree(current);
+            current = next;
+        }
+        if (memory_pool)
+            kfree(memory_pool);
+
+        printk(KERN_INFO "SlabAllocator: Memory cleaned up\n");
+    }
+
+    void* allocate() {
+        MemoryBlock* current = block_list_head;
+        while (current) {
+            if (current->is_free) {
+                current->is_free = false;
+                printk(KERN_INFO "SlabAllocator: Allocated block at %p\n", current->data);
+                return current->data;
+            }
+            current = current->next;
+        }
+        printk(KERN_ALERT "SlabAllocator: No free blocks available!\n");
+        return nullptr;
+    }
+
+    void deallocate(void* ptr) {
+        MemoryBlock* current = block_list_head;
+        while (current) {
+            if (current->data == ptr) {
+                if (!current->is_free) {
+                    current->is_free = true;
+                    printk(KERN_INFO "SlabAllocator: Block at %p deallocated\n", ptr);
+                } else {
+                    printk(KERN_WARNING "SlabAllocator: Double free detected at %p\n", ptr);
+                }
+                return;
+            }
+            current = current->next;
+        }
+        printk(KERN_ALERT "SlabAllocator: Invalid free at %p\n", ptr);
+    }
+};
+
+// Global allocator instance
+static SlabAllocator* slab_allocator = nullptr;
+static void* test_ptr1 = nullptr;
+static void* test_ptr2 = nullptr;
+
+// Module init function
+static int __init slab_allocator_init(void) {
+    printk(KERN_INFO "SlabAllocator Module: Loading...\n");
+
+    slab_allocator = new SlabAllocator();
+    if (!slab_allocator) {
+        printk(KERN_ALERT "SlabAllocator Module: Failed to create allocator\n");
+        return -ENOMEM;
+    }
+
+    // Test allocations
+    test_ptr1 = slab_allocator->allocate();
+    test_ptr2 = slab_allocator->allocate();
+
+    return 0;
+}
+
+// Module exit function
+static void __exit slab_allocator_exit(void) {
+    printk(KERN_INFO "SlabAllocator Module: Unloading...\n");
+
+    // Free test allocations
+    if (slab_allocator) {
+        if (test_ptr1) slab_allocator->deallocate(test_ptr1);
+        if (test_ptr2) slab_allocator->deallocate(test_ptr2);
+        delete slab_allocator;
+    }
+}
+
+module_init(slab_allocator_init);
+module_exit(slab_allocator_exit);
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Your Name");
+MODULE_DESCRIPTION("Simple Slab Allocator as a Kernel Module in C++");
+🔥 Highlights:
+MemoryBlock: Represents each 64-byte memory block with a bool is_free.
+
+SlabAllocator:
+
+Initializes the memory pool (kmalloc).
+
+Builds a linked list of MemoryBlock nodes.
+
+allocate(): Finds and marks a free block.
+
+deallocate(): Marks the block as free again.
+
+printk: Logs every step — creation, allocation, deallocation.
+
+Testing:
+
+Allocates two blocks in init.
+
+Frees them in exit.
+
+🧠 Learning Outcome:
+Kernel-level memory management.
+
+Custom allocator design.
+
+Real-world use of linked lists.
+
+Basic C++ in the Linux Kernel environment.
